@@ -11,7 +11,6 @@ import concurrent
 import asyncio
 
 _watch_dog_interval = 0.01
-#_watch_dog_interval = 0.5
 
 def check_version():
     if sys.version_info.major != 3:
@@ -115,6 +114,7 @@ class process(object):
             self.__end()
 
     def __end(self):
+        '''Funcion to exit loop gracefully.'''
         self.__is_closed = True
         self.__is_started = False
         close_tasks = [self.close()]
@@ -126,19 +126,17 @@ class process(object):
             self.__tasks.exception()
         except asyncio.InvalidStateError:
             pass
+        except KeyboardInterrupt:
+            pass
         except Exception as e:
             self.exception_run(e)
         finally:
             self.loop.close()
             self.__last()
 
-    def reset(self):
-        if self.__is_closed and not self.__is_started:
-            self.__is_closed = False
-            if self.loop.is_closed():
-                self.loop = asyncio.get_event_loop()
-
     def __last(self):
+        '''Last action when processing is being closed.
+        '''
         self.__is_closed = True
         self.__is_started = False
         while not self.queue_err_in.empty():
@@ -146,12 +144,20 @@ class process(object):
         while not self.queue_err_out.empty():
             self.queue_err_out.get_nowait()
 
+    def reset(self):
+        '''When the processing is done or terminate, run this function before restart.
+        '''
+        if self.__is_closed and not self.__is_started:
+            self.__is_closed = False
+            if self.loop.is_closed():
+                self.loop = asyncio.get_event_loop()
+
     def start(self):
         self.reset()
         self.process.start()
 
     def run(self):
-        '''Run the target commonly.
+        '''Run the target as common usage.
         '''
         self.start()
         self.join()
@@ -178,7 +184,7 @@ class process(object):
         '''
         pass
 
-### Test start ###
+### Test funcion as below ###
 
 @asyncio.coroutine
 def coroutine_count_down(n):
