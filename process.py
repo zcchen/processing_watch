@@ -2,7 +2,7 @@
 # -*-   encoding : utf8   -*-
 
 '''This module is used for generating a process with a monitor
-waiting for an error to passing in or out.
+waiting for an error to passing out.
 '''
 
 import sys
@@ -10,25 +10,17 @@ import multiprocessing
 import concurrent
 import asyncio
 
-_watch_dog_interval = 0.01
+from processing_watch import _base
 
-def check_version():
-    if sys.version_info.major != 3:
-        print("Python 3.4+ is need")
-        sys.exit(1)
-    elif sys.version_info.major == 3 and not sys.version_info.minor >= 4:
-        print("Python 3.4+ is need")
-        sys.exit(1)
-
-class process(object):
-    _config = {}
-    __is_started = False
-    __is_closed = False
-    queue_err_in = multiprocessing.Queue()
-    queue_err_out = multiprocessing.Queue()
+class process(_base.__base_process):
 
     def __init__(self, target=None, loop=None, name=None,
                        args=(), kwargs={}):
+        '''process(target = <function>, loop = [asyncio.loop],
+        name = [process_name],
+        args = [function_args], kwargs = [function_kwargs])
+        '''
+        self._config = {}
         self._config['target'] = target
         self._config['name'] = name
         self._config['args'] = args
@@ -43,50 +35,31 @@ class process(object):
         self.process = multiprocessing.Process(target=self._proc,
                                        name=self._config['name'],)
 
-    @property
-    def is_started(self):
-        return self.__is_started
-
-    @property
-    def is_closed(self):
-        return self.__is_closed
-
-    def is_alive(self):
-        return self.process.is_alive()
-
-    @asyncio.coroutine
-    def __err_check(self):
-        try:
-            e = self.queue_err_in.get_nowait()
-            if e:
-                raise e
-        except multiprocessing.queues.Empty:
-            pass
-        yield from asyncio.sleep(_watch_dog_interval)
-
     @asyncio.coroutine
     def __watch_dog(self):
-        while self.__is_started:
-            yield from self.__err_check()
+        while self.is_started:
+            if self._watch_outside.is_set():
+                raise KeyboardInterrupt("Terminating from outside")
+            yield from asyncio.sleep(_base._watch_dog_interval)
 
     @asyncio.coroutine
     def __coroutine_prog(self):
-        self.__is_started = True
+        self.set_started(True)
         try:
             yield from self._config['target'](*self._config['args'],
                                               **self._config['kwargs'])
         except BaseException as e:
-            self.queue_err_out.put_nowait(e)
-        self.__is_started = False
+            self.queue_err_out.put_nowait((self.process.name, e))
+        self.set_started(False)
 
     def __normal_prog(self):
-        self.__is_started = True
+        self.set_started(True)
         try:
             self._config['target'](*self._config['args'],
                                    **self._config['kwargs'])
         except BaseException as e:
-            self.queue_err_out.put_nowait(e)
-        self.__is_started = False
+            self.queue_err_out.put_nowait((self.process.name, e))
+        self.set_started(False)
 
     def __executor_run(self):
         self.executor.submit(self.__normal_prog,)
@@ -107,16 +80,18 @@ class process(object):
                 self.__executor_run()
             self.loop.run_until_complete(self.__tasks)
         except Exception as e:
+            self._is_started = False
+            self.queue_err_out.put_nowait((self.process.name, e))
             self.exception_run(e)
         except KeyboardInterrupt as e:
+            self._is_started = False
             self.keyboard_interrupt_run(e)
         finally:
             self.__end()
 
     def __end(self):
         '''Funcion to exit loop gracefully.'''
-        self.__is_closed = True
-        self.__is_started = False
+        self.first_clean()
         close_tasks = [self.close()]
         if not asyncio.iscoroutinefunction(self._config['target']):
             self.executor.shutdown(False)
@@ -132,50 +107,7 @@ class process(object):
             self.exception_run(e)
         finally:
             self.loop.close()
-            self.__last()
-
-    def __last(self):
-        '''Last action when processing is being closed.
-        '''
-        self.__is_closed = True
-        self.__is_started = False
-        while not self.queue_err_in.empty():
-            self.queue_err_in.get_nowait()
-        while not self.queue_err_out.empty():
-            self.queue_err_out.get_nowait()
-
-    def reset(self):
-        '''When the processing is done or terminate, run this function before restart.
-        '''
-        if self.__is_closed and not self.__is_started:
-            self.__is_closed = False
-            if self.loop.is_closed():
-                self.loop = asyncio.get_event_loop()
-
-    def start(self):
-        self.reset()
-        self.process.start()
-
-    def run(self):
-        '''Run the target as common usage.
-        '''
-        self.start()
-        self.join()
-
-    def join(self, timeout=None):
-        '''Compatiable with multiprocessing.processing.join()
-        '''
-        self.process.join(timeout)
-
-    def exception_run(self, exception):
-        '''Exception handler, modify it if you need.
-        '''
-        print(exception)
-
-    def keyboard_interrupt_run(self, exception):
-        '''KeyboardInterrupt handler, modify it if you need.
-        '''
-        print(exception)
+            self.last_clean()
 
     @asyncio.coroutine
     def close(self):
@@ -213,7 +145,7 @@ def test(target, error_test=False):
             raise ValueError("just for test")
     except Exception as e:
         print("sending error")
-        a.queue_err_in.put_nowait(e)
+        #a.queue_err_in.put_nowait(e)
     except KeyboardInterrupt:
         print("Terminated by user.")
     if a.is_alive():
@@ -221,7 +153,6 @@ def test(target, error_test=False):
 
 if __name__ == '__main__':
     import time
-    check_version()
 
     print("coroutine_count_down testing start...")
     test(coroutine_count_down)
