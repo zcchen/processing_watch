@@ -10,7 +10,10 @@ import multiprocessing
 import concurrent
 import asyncio
 
-from processing_watch import _base
+try:
+    from processing_watch import _base
+except ImportError:
+    import _base
 
 class process(_base.__base_process):
 
