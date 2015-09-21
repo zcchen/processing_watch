@@ -3,7 +3,7 @@
 
 import multiprocessing
 
-_watch_dog_interval = 0.01
+_watch_dog_interval = 0.001
 
 class __base_process(object):
     _is_started = False
